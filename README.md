@@ -2,11 +2,6 @@
 
 Test task to ORB IT. 
 
-**Module layout convention** — each feature module owns its `models / schemas / service /
-router` (and `dependencies` where relevant). Routers handle HTTP; services hold business
-logic; `core` holds everything cross-cutting. To add a feature, drop in a new module under
-`app/modules/` and include its router in `app/main.py`.
-
 ## Endpoints
 
 
@@ -69,7 +64,6 @@ Container itself running an alembic migration.
 
 ```bash
 pip install -r requirements.txt
-# point DATABASE_URL at a reachable Postgres, then:
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
@@ -91,5 +85,3 @@ uvicorn app.main:app --reload
 - `401` unauthenticated / invalid token
 - `403` forbidden (role)
 - `404` not found
-
-## Notes & deliberate simplifications
