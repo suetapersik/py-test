@@ -22,6 +22,8 @@ services:
   app:
     build: .
     restart: unless-stopped
+    # Run migrations before serving so the schema is always up to date.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     env_file:
       - .env
     environment:
@@ -29,6 +31,7 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS}
+      UNVERIFIED_USER_TTL_DAYS: ${UNVERIFIED_USER_TTL_DAYS}
     ports:
       - "8000:8000"
     depends_on:

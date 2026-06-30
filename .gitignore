@@ -3,3 +3,11 @@ test.md
 .env
 .gitignore
 .claude
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local databases
+*.db
+*.sqlite3
