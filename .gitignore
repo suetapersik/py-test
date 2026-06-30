@@ -1,2 +1,5 @@
 .venv
 test.md
+users.db
+.env
+.gitignore
