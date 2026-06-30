@@ -90,7 +90,7 @@ uvicorn app.main:app --reload
 
 Getting into db with default data:
 ```bash
-docker compose exec db psql -U testorbit -d appdb -c
+docker compose exec db psql -U appuser -d appdb -c
 ```
 Promoting to admin:
 ```bash
