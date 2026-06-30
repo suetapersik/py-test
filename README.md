@@ -7,10 +7,11 @@ Users API tets task built with -> FastAPI and async SQLAlchemy:
 - user management.
 
 ## Architecture
-- Single entrypoint: `main.py`
+- Single entrypoint: `main.py` (modular monolith)
 - Auth flows: `/auth/signup`, `/auth/login`, `/auth/refresh`, `/auth/verify`
-- User management: `/users/me`, `/users`, `/users/{id}`
+- User management: `/me` (alias `/users/me`), `/users`, `/users/{id}`
 - Database: async SQLAlchemy with asyncpg and PostgreSQL via Docker
+- Background cleanup: in-process asyncio task purges unverified users past their TTL
 - Config: environment variables loaded from `.env`
 
 ## Prerequisites
@@ -32,6 +33,8 @@ Required `.env` values:
 - `SECRET_KEY`
 - `ACCESS_TOKEN_EXPIRE_MINUTES`
 - `REFRESH_TOKEN_EXPIRE_DAYS`
+- `UNVERIFIED_USER_TTL_DAYS` (optional, default `2`)
+- `CLEANUP_INTERVAL_SECONDS` (optional, default `3600`)
 
 ## Error codes
 - `400` invalid input or business rule
@@ -40,4 +43,8 @@ Required `.env` values:
 - `404` not found
 
 ## Notes
-- Unverified-user cleanup is described here instead of implemented with Celery/Redis for this test task.
+- Unverified-user cleanup runs as an in-process asyncio loop started in the app lifespan
+  (`cleanup_loop` → `purge_unverified_users`), deleting users that never verified within
+  `UNVERIFIED_USER_TTL_DAYS`. This keeps the project single-process with no extra infra.
+  In a horizontally scaled deployment this would move to a Celery beat job (or a DB-level
+  scheduler) so the sweep runs once cluster-wide rather than once per process.
