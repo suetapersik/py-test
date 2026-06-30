@@ -1,9 +1,4 @@
-"""In-process background cleanup.
-
-Done with asyncio so the monolith needs no extra infra. In a horizontally scaled
-deployment this would move to a Celery beat job (or a DB-level scheduler) so the sweep
-runs once cluster-wide instead of once per process.
-"""
+# used in stage only instead of complex Celery
 
 import asyncio
 from datetime import timedelta
