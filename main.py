@@ -22,15 +22,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Settings from .env
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
+DATABASE_URL = os.getenv("DATABASE_URL")
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
-# Async DB setup
-# - create_async_engine + async_sessionmaker replace sync create_engine
-# - async session is used with async with / yield pattern in dependencies
+# async DB setup
+# - create_async_engine + async_sessionmaker
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -61,9 +60,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default=UserRole.USER)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_code: Mapped[str | None] = mapped_column(String(6), nullable=True)
-    verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=now())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime, onupdate=now(), nullable=True)
+    verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), onupdate=now(), nullable=True)
 
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
@@ -74,8 +73,8 @@ class RefreshToken(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     token: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=now())
 
     user: Mapped[User] = relationship("User", back_populates="refresh_tokens")
 
@@ -86,11 +85,13 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    # bcrypt only uses the first 72 bytes; truncate to avoid hashing errors on long passwords
+    return pwd_context.hash(password[:72])
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    # truncate before verify so it matches the stored hash created from password[:72]
+    return pwd_context.verify(plain_password[:72], hashed_password)
 
 
 def create_access_token(user_id: int) -> str:
@@ -156,7 +157,7 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-# Auth dependencies (async) | Should rewrite the 401 code to unauthenticated, cz 403 is actually unauthorized
+# Auth dependencies (async) | rewrite the 401 code to unauthenticated, cz 403 is actually unauthorized
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     authorization = request.headers.get("authorization")
     if not authorization or not authorization.lower().startswith("bearer "):
@@ -190,10 +191,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Users API", lifespan=lifespan)
 
 
-@app.get("/health", summary="Health check", description="Simple healthcheck.")
+@app.get("/health", summary="Health check", description="Simple health check endpoint for Docker.")
 async def health() -> dict:
     return {"status": "ok"}
-
 
 @app.post(
     "/auth/signup",
@@ -203,7 +203,6 @@ async def health() -> dict:
     description="Creates a new user account and returns a dev verification code.",
 )
 async def signup(payload: UserCreate, session: AsyncSession = Depends(get_db)) -> MessageResponse:
-    # async SELECT - use session.execute with select()
     existing = await session.scalar(select(User).where(User.email == payload.email))
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
