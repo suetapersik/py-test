@@ -85,3 +85,18 @@ uvicorn app.main:app --reload
 - `401` unauthenticated / invalid token
 - `403` forbidden (role)
 - `404` not found
+
+## Admin role and verification
+
+Getting into db with default data:
+```bash
+docker compose exec db psql -U testorbit -d appdb -c
+```
+Promoting to admin:
+```bash
+"UPDATE users SET role='admin' WHERE email='your@email.com';"
+```
+If you want to verify despite seeing "UPDATE 1":
+```bash
+"SELECT id, email, role, is_verified FROM users;"
+```
