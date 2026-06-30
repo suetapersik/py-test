@@ -1,5 +1,3 @@
-"""Auth business logic: registration, verification, login, refresh rotation."""
-
 import random
 import string
 from datetime import timedelta
@@ -30,7 +28,6 @@ def _generate_verification_code() -> str:
 
 
 async def register_user(session: AsyncSession, data: UserCreate) -> str:
-    """Create an unverified user and return the dev verification code."""
     existing = await session.scalar(select(User).where(User.email == data.email))
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
@@ -46,14 +43,12 @@ async def register_user(session: AsyncSession, data: UserCreate) -> str:
     )
     session.add(user)
     await session.commit()
-    # Dev-only: a real deployment would send this via an email/SMS provider instead.
     print(f"[DEV] Verification code for {data.email}: {code}")
     return code
 
 
 async def verify_email(session: AsyncSession, email: str, code: str) -> None:
     user = await session.scalar(select(User).where(User.email == email))
-    # Same error for unknown email and wrong code to avoid user enumeration.
     if not user or user.verification_code != code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
     expires = user.verification_expires_at
@@ -87,7 +82,6 @@ async def _persist_refresh_token(session: AsyncSession, user_id: int) -> str:
 
 
 async def issue_tokens(session: AsyncSession, user: User) -> tuple[str, str]:
-    """Issue a fresh access+refresh pair on login."""
     access = create_access_token(user.id)
     refresh = await _persist_refresh_token(session, user.id)
     await session.commit()
@@ -95,19 +89,16 @@ async def issue_tokens(session: AsyncSession, user: User) -> tuple[str, str]:
 
 
 async def rotate_refresh_token(session: AsyncSession, refresh_token: str) -> tuple[str, str]:
-    """Validate a refresh token, revoke it, and issue a new access+refresh pair.
 
-    Rotation means a refresh token is single-use: once exchanged it is revoked, so a
-    leaked/replayed token cannot be reused.
-    """
     decoded = decode_token(refresh_token)  # validates signature + JWT exp
     if decoded.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
     row = await session.scalar(select(RefreshToken).where(RefreshToken.token == refresh_token))
+
     if not row or row.revoked:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-    # Authoritative server-side expiry check (also covers a shortened TTL).
+        
     if ensure_aware(row.expires_at) < utcnow():
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired")
 

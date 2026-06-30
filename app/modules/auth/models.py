@@ -1,5 +1,3 @@
-"""Refresh-token ORM model (persisted so tokens can be revoked/rotated)."""
-
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, false
@@ -7,7 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.functions import now
 
 from app.core.database import Base
-# Import User so both classes are registered on the mapper before configure.
+
 from app.modules.users.models import User
 
 

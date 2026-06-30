@@ -1,5 +1,3 @@
-"""Data-access logic for users. HTTP concerns live in the router."""
-
 from collections.abc import Sequence
 from typing import Optional
 
@@ -24,7 +22,6 @@ async def list_all(session: AsyncSession) -> Sequence[User]:
 
 
 async def apply_update(session: AsyncSession, user: User, data: UserUpdate) -> User:
-    # exclude_unset => true PATCH semantics (only provided fields are touched).
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(user, field, value)
     await session.commit()

@@ -18,7 +18,7 @@ from app.modules.users.models import User
 
 
 async def purge_unverified_users() -> int:
-    """Delete users that never verified within UNVERIFIED_USER_TTL_DAYS."""
+    # simplified version of user deletion without using celery. | Add celery "AT SCALE" 
     cutoff = utcnow() - timedelta(days=settings.unverified_user_ttl_days)
     async with SessionLocal() as session:
         result = await session.execute(
@@ -29,7 +29,6 @@ async def purge_unverified_users() -> int:
 
 
 async def purge_expired_refresh_tokens() -> int:
-    """Drop refresh-token rows that are past their expiry to keep the table small."""
     async with SessionLocal() as session:
         result = await session.execute(
             delete(RefreshToken).where(RefreshToken.expires_at < utcnow())
@@ -39,7 +38,6 @@ async def purge_expired_refresh_tokens() -> int:
 
 
 async def cleanup_loop() -> None:
-    """Periodic loop started/stopped by the app lifespan."""
     while True:
         try:
             removed_users = await purge_unverified_users()

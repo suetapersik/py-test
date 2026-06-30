@@ -1,4 +1,3 @@
-"""Pydantic schemas for the users module."""
 
 from datetime import datetime
 from typing import Optional

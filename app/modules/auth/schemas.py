@@ -1,5 +1,3 @@
-"""Pydantic schemas for the auth module."""
-
 from pydantic import BaseModel, EmailStr
 
 

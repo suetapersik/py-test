@@ -1,5 +1,3 @@
-"""User management endpoints: /me, /users, /users/{id}."""
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 

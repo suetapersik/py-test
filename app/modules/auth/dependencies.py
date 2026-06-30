@@ -1,5 +1,3 @@
-"""Auth dependencies: resolve the current user and enforce roles."""
-
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,8 +6,7 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.modules.users.models import User, UserRole
 
-# auto_error=False so we can return 401 (not HTTPBearer's default 403) when missing,
-# while still exposing the Authorize button in Swagger UI.
+
 bearer_scheme = HTTPBearer(auto_error=False)
 
 

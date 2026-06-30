@@ -1,13 +1,38 @@
-.venv
-test.md
 .env
-.gitignore
-.claude
 
-# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
 
-# Local databases
+.venv/
+
+build/
+dist/
+*.egg-info/
+.eggs/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+
 *.db
+*.sqlite
 *.sqlite3
+
+*.log
+
+.idea/
+.vscode/
+*.swp
+*~
+
+.DS_Store
+Thumbs.db
+
+.claude/
+test.md

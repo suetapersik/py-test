@@ -1,5 +1,3 @@
-"""Async SQLAlchemy engine, session factory and the declarative Base."""
-
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -16,6 +14,5 @@ class Base(DeclarativeBase):
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency that yields a request-scoped async session."""
     async with SessionLocal() as session:
         yield session

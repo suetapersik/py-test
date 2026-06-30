@@ -1,5 +1,3 @@
-"""Schemas shared across modules."""
-
 from pydantic import BaseModel
 
 

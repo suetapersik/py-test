@@ -1,4 +1,4 @@
-"""User ORM model and role constants."""
+# orm
 
 from datetime import datetime
 
@@ -29,7 +29,6 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), onupdate=now(), nullable=True)
 
-    # Defined with a string target so users does not import auth (one-way dependency).
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(  # noqa: F821
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"
     )
