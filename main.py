@@ -1,35 +1,48 @@
-from datetime import datetime, timedelta
+"""Users API - authentication, verification, user management, async SQLAlchemy."""
+
+import random
+import string
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, select
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
-from celery import Celery
-import random
-import string
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.sql.functions import now
+
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Database =====================
+# Settings from .env
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# Security =====================
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+
+# Async DB setup
+# - create_async_engine + async_sessionmaker replace sync create_engine
+# - async session is used with async with / yield pattern in dependencies
+engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+async def get_db():
+    async with SessionLocal() as session:
+        yield session
+
+
+class Base(DeclarativeBase):
+    pass
+
 
 # Models
 class UserRole(str):
@@ -40,54 +53,38 @@ class UserRole(str):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
-    first_name = Column(String(120))
-    last_name = Column(String(120))
-    role = Column(String(20), default=UserRole.USER)
-    is_verified = Column(Boolean, default=False)
-    verification_code = Column(String(6), nullable=True)
-    verification_expires_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_name: Mapped[str | None] = mapped_column(String(120))
+    last_name: Mapped[str | None] = mapped_column(String(120))
+    role: Mapped[str] = mapped_column(String(20), default=UserRole.USER)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    verification_code: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, onupdate=now(), nullable=True)
 
-    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
 
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    token = Column(String(255), unique=True, nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    token: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=now())
 
-    user = relationship("User", back_populates="refresh_tokens")
-
-
-# Celery =====================
-celery_app = Celery(
-    "tasks",
-    broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
-    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
-)
+    user: Mapped[User] = relationship("User", back_populates="refresh_tokens")
 
 
-@celery_app.task
-def cleanup_unverified_users():
-    """Delete users not verified within TTL."""
-    db = SessionLocal()
-    try:
-        cutoff = datetime.utcnow() - timedelta(days=int(os.getenv("UNVERIFIED_USER_TTL_DAYS", "2")))
-        db.query(User).filter(User.is_verified == False, User.created_at < cutoff).delete()
-        db.commit()
-    finally:
-        db.close()
+# Auth helpers
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-# Auth helpers =====================
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
@@ -97,13 +94,13 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(user_id: int) -> str:
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {"sub": str(user_id), "exp": expire, "type": "access"}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_refresh_token(user_id: int) -> str:
-    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     payload = {"sub": str(user_id), "exp": expire, "type": "refresh"}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -111,11 +108,11 @@ def create_refresh_token(user_id: int) -> str:
 def decode_token(token: str) -> dict:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except JWTError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
 
-# Schemas =====================
+# Schemas
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
@@ -159,136 +156,230 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-# DB dependency
-def get_db() -> Session:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-# Auth dependencies =====================
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+# Auth dependencies (async) | Should rewrite the 401 code to unauthenticated, cz 403 is actually unauthorized
+async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
+    authorization = request.headers.get("authorization")
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    token = authorization.split(" ", 1)[1]
     payload = decode_token(token)
-    user_id = int(payload.get("sub"))
-    user = db.query(User).filter(User.id == user_id).first()
+    user_id = int(payload["sub"])
+    user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
 
 
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
-    return current_user
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return user
 
 
-# App =====================
-app = FastAPI(title="users API", description="fastapi instance", version="1.0")
+async def create_tables():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
-@app.post("/auth/signup", response_model=MessageResponse, status_code=201)
-def signup(payload: UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == payload.email).first()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await create_tables()
+    yield
+
+
+app = FastAPI(title="Users API", lifespan=lifespan)
+
+
+@app.post(
+    "/auth/signup",
+    response_model=MessageResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new user",
+    description="Creates a new user account and returns a dev verification code.",
+)
+async def signup(payload: UserCreate, session: AsyncSession = Depends(get_db)) -> MessageResponse:
+    # async SELECT - use session.execute with select()
+    existing = await session.scalar(select(User).where(User.email == payload.email))
     if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
     user = User(
         email=payload.email,
         hashed_password=hash_password(payload.password),
         first_name=payload.first_name,
         last_name=payload.last_name,
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
 
     code = "".join(random.choices(string.digits, k=6))
     user.verification_code = code
-    user.verification_expires_at = datetime.utcnow() + timedelta(minutes=15)
-    db.commit()
+    user.verification_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    await session.commit()
     print(f"[DEV] Verification code for {payload.email}: {code}")
     return MessageResponse(message=f"Registered. Dev verification code: {code}")
 
 
-@app.post("/auth/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == payload.email).first()
+@app.post(
+    "/auth/login",
+    response_model=TokenResponse,
+    summary="Sign in",
+    description="Authenticate user and return access/refresh tokens. Requires verified account.",
+)
+async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db)) -> TokenResponse:
+    user = await session.scalar(select(User).where(User.email == payload.email))
     if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not user.is_verified:
-        raise HTTPException(status_code=400, detail="Email not verified")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email not verified")
 
-    access = create_access_token(user.id)
-    refresh = create_refresh_token(user.id)
-    db.add(RefreshToken(user_id=user.id, token=refresh, expires_at=datetime.utcnow() + timedelta(days=30)))
-    db.commit()
-    return TokenResponse(access_token=access, refresh_token=refresh)
+    access_token = create_access_token(user.id)
+    refresh_token = create_refresh_token(user.id)
+    session.add(
+        RefreshToken(
+            user_id=user.id,
+            token=refresh_token,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+        )
+    )
+    await session.commit()
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
-@app.post("/auth/refresh", response_model=TokenResponse)
-def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
-    token_row = db.query(RefreshToken).filter(RefreshToken.token == payload.refresh_token).first()
+@app.post(
+    "/auth/refresh",
+    response_model=TokenResponse,
+    summary="Refresh access token",
+    description="Exchange a valid refresh token for a new access token.",
+)
+async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_db)) -> TokenResponse:
+    token_row = await session.scalar(select(RefreshToken).where(RefreshToken.token == payload.refresh_token))
     if not token_row:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-    user = db.query(User).filter(User.id == token_row.user_id).first()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    user = await session.get(User, token_row.user_id)
     if not user:
-        raise HTTPException(status_code=401, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return TokenResponse(access_token=create_access_token(user.id), refresh_token=payload.refresh_token)
 
 
-@app.post("/auth/verify", response_model=MessageResponse)
-def verify(payload: VerifyRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.verification_code != payload.code:
-        raise HTTPException(status_code=400, detail="Invalid verification code")
-    if current_user.verification_expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Verification code expired")
-    current_user.is_verified = True
-    current_user.verification_code = None
-    current_user.verification_expires_at = None
-    db.commit()
+@app.post(
+    "/auth/verify",
+    response_model=MessageResponse,
+    summary="Verify email",
+    description="Confirm account via code.",
+)
+async def verify(payload: VerifyRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_db)) -> MessageResponse:
+    if user.verification_code != payload.code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
+    if user.verification_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code expired")
+    user.is_verified = True
+    user.verification_code = None
+    user.verification_expires_at = None
+    await session.commit()
     return MessageResponse(message="Email verified")
 
 
-@app.get("/users/me", response_model=UserRead)
-def get_me(current_user: User = Depends(get_current_user)):
-    return current_user
+@app.get(
+    "/users/me",
+    response_model=UserRead,
+    summary="Get current user",
+    description="Return the authenticated user's profile.",
+)
+async def get_me(user: User = Depends(get_current_user)) -> UserRead:
+    return UserRead(
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        role=user.role,
+        is_verified=user.is_verified,
+        created_at=user.created_at,
+    )
 
 
-@app.get("/users", response_model=list[UserRead])
-def list_users(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return db.query(User).all()
+@app.get(
+    "/users",
+    response_model=list[UserRead],
+    summary="List users",
+    description="List all users. Admin only.",
+)
+async def list_users(_: User = Depends(require_admin), session: AsyncSession = Depends(get_db)) -> list[UserRead]:
+    result = await session.execute(select(User))
+    users = result.scalars().all()
+    return [
+        UserRead(
+            id=u.id,
+            email=u.email,
+            first_name=u.first_name,
+            last_name=u.last_name,
+            role=u.role,
+            is_verified=u.is_verified,
+            created_at=u.created_at,
+        )
+        for u in users
+    ]
 
 
-@app.get("/users/{user_id}", response_model=UserRead)
-def get_user(user_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+@app.get(
+    "/users/{user_id}",
+    response_model=UserRead,
+    summary="Get user by id",
+    description="Return user by id. Admin only.",
+)
+async def get_user(user_id: int, _: User = Depends(require_admin), session: AsyncSession = Depends(get_db)) -> UserRead:
+    user = await session.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return UserRead(
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        role=user.role,
+        is_verified=user.is_verified,
+        created_at=user.created_at,
+    )
 
 
-@app.patch("/users/{user_id}", response_model=UserRead)
-def update_user(user_id: int, payload: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+@app.patch(
+    "/users/{user_id}",
+    response_model=UserRead,
+    summary="Update user",
+    description="Partially update user data. Owner or admin only.",
+)
+async def update_user(user_id: int, payload: dict, current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_db)) -> UserRead:
+    user = await session.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if current_user.id != user_id and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Forbidden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.id != user_id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     for field in ("email", "first_name", "last_name"):
         if field in payload:
             setattr(user, field, payload[field])
-    db.commit()
-    db.refresh(user)
-    return user
+    await session.commit()
+    await session.refresh(user)
+    return UserRead(
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        role=user.role,
+        is_verified=user.is_verified,
+        created_at=user.created_at,
+    )
 
 
-@app.delete("/users/{user_id}", response_model=MessageResponse)
-def delete_user(user_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+@app.delete(
+    "/users/{user_id}",
+    response_model=MessageResponse,
+    summary="Delete user",
+    description="Delete user by id. Admin only.",
+)
+async def delete_user(user_id: int, _: User = Depends(require_admin), session: AsyncSession = Depends(get_db)) -> MessageResponse:
+    user = await session.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    db.delete(user)
-    db.commit()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    await session.delete(user)
+    await session.commit()
     return MessageResponse(message="User deleted")
