@@ -190,6 +190,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Users API", lifespan=lifespan)
 
 
+@app.get("/health", summary="Health check", description="Simple healthcheck.")
+async def health() -> dict:
+    return {"status": "ok"}
+
+
 @app.post(
     "/auth/signup",
     response_model=MessageResponse,
@@ -346,7 +351,7 @@ async def get_user(user_id: int, _: User = Depends(require_admin), session: Asyn
     "/users/{user_id}",
     response_model=UserRead,
     summary="Update user",
-    description="Partially update user data. Owner or admin only.",
+    description="Partially update user data. Admin only.",
 )
 async def update_user(user_id: int, payload: dict, current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_db)) -> UserRead:
     user = await session.get(User, user_id)
