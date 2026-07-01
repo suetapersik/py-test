@@ -39,9 +39,7 @@ At scale moving this to Celery.
 
 ## Database & migrations
 
-- async sqlAlchemy 2.0 with `asyncpg` against postgreSQL inside of Docker.
-- schema is managed by alembic (`migrations/`, async `env.py`). The app doesn't
-  auto-create tables & migrations are the only source of truth.
+runs automatically on docker container build, should be used manually on dev stage.
 
 ```bash
 alembic upgrade head
@@ -50,8 +48,16 @@ alembic revision --autogenerate -m "message"
 
 ## Run
 
+### prod version:
 ```bash
 docker compose up --build
+```
+
+### dev version:
+
+```bash
+python -m alembic upgrade head 
+python -m uvicorn app.main:app --reload 
 ```
 
 Container itself runns an alembic migration.
@@ -63,6 +69,24 @@ pip install -r requirements.txt
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Integration tests run every endpoint through the ASGI app against an ephemeral SQLite
+database: 
+```bash
+- auth flows, 
+- role guards, 
+- refresh-token rotation, 
+- cleanup. 
+```
+Unit tests cover the
+security helpers. No running Postgres needed.
 
 ## Environment (`.env`)
 

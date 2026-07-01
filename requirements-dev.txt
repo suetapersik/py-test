@@ -1,0 +1,6 @@
+# Test dependencies (install alongside requirements.txt to run the suite).
+-r requirements.txt
+pytest==8.3.2
+pytest-asyncio==0.23.8
+httpx==0.27.0
+aiosqlite==0.20.0
